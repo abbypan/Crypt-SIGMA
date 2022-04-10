@@ -1,0 +1,20 @@
+=pod
+
+=encoding utf8
+
+=head1 NAME
+
+L<Crypt::SIGMA> 
+
+=head2 PROTOCOL
+
+L<https://www.ietf.org/proceedings/52/slides/ipsec-9.pdf>
+
+SIGMA_I
+
+=head1 FUNCTION
+
+
+
+
+=cut
