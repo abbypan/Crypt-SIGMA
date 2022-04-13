@@ -110,9 +110,10 @@ pem_write_evp_pkey( 'a_ek_priv.pem', $ek_a_priv_pkey, 1 );
 # }
 
 # b -> a {  g^y, nb, ENC{ B, SigB(MAC(1, na, B, g^y)) }
-my $id_b   = 'device_b';
-my $msg2_r = b_send_msg2(
-  $group, $msg1, $id_b, $random_range, $point_compress_t, $hash_name, $key_len, \&encode_cbor, \&decode_cbor,
+my $id_b          = 'device_b';
+my $b_recv_msg1_r = b_recv_msg1( $group, $msg1, \&decode_cbor, $ctx );
+my $b_send_msg2_r = b_send_msg2(
+  $group, $b_recv_msg1_r, $id_b, $random_range, $point_compress_t, $hash_name, $key_len, \&encode_cbor,
   $mac_func,
   sub {
     my ( $b_tbs ) = @_;
@@ -122,7 +123,7 @@ my $msg2_r = b_send_msg2(
   $ctx,
 );
 
-my ( $nb, $ek_key_b_r, $derive_key_b_r, $b_recv_msg1_r, $msg2 ) = @{$msg2_r}{qw/nb y_r derive_key msg1_r msg2/};
+my ( $nb, $ek_key_b_r, $derive_key_b_r, $msg2 ) = @{$b_send_msg2_r}{qw/nb y_r derive_key msg2/};
 my ( $b_z,       $b_ke,            $b_km )                 = @{$derive_key_b_r}{qw/z ke km/};
 my ( $b_recv_na, $b_recv_ek_a_pub, $b_recv_ek_a_pub_pkey ) = @{$b_recv_msg1_r}{qw/na  gx gx_pkey/};
 my ( $ek_b,      $ek_b_priv,       $ek_b_pub, $ek_b_pub_hex_compressed, $ek_b_pub_pkey, $ek_b_priv_pkey ) =
@@ -176,9 +177,9 @@ my $a_send_msg3 = a_send_msg3(
 # }
 
 # b recv a {  MAC(2, na, "ack")
-my $mac4 = b_recv_msg3(
+my $msg3_verify_res = b_recv_msg3(
   $a_send_msg3,
-  $msg2_r,
+  $b_send_msg2_r,
   \&encode_cbor, \&decode_cbor,
   $mac_func,
   sub {
@@ -187,13 +188,15 @@ my $mac4 = b_recv_msg3(
   },
   $dec_func,
 );
+### $msg3_verify_res
 
+my $mac4 = b_send_msg4( $b_recv_msg1_r, $b_send_msg2_r, \&encode_cbor, $mac_func );
 ### mac4: unpack("H*", $mac4)
 # }
 
 # a recv b {
-my $res = a_recv_msg4( $mac4, $na, $a_recv_msg2_r, \&encode_cbor, $mac_func );
-
+my $res_msg4 = a_recv_msg4( $mac4, $na, $a_recv_msg2_r, \&encode_cbor, $mac_func );
+###  $res_msg4
 # }
 
 # ks {
