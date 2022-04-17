@@ -86,9 +86,9 @@ my $sign_func = sub {
   return ( $b_sig->get_r, $b_sig->get_s );
 };
 
-my $group_params = get_hash2curve_params( $group_name );
-my $group        = $group_params->[0];
-my $ctx          = $group_params->[-1];
+my $group_params = get_ec_params( $group_name );
+my $group        = $group_params->{group};
+my $ctx          = $group_params->{ctx};
 
 # a->b { g^x, na
 my $id_a = 'device_a';
