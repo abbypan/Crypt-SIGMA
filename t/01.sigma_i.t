@@ -112,6 +112,7 @@ pem_write_evp_pkey( 'a_ek_priv.pem', $ek_a_priv_pkey, 1 );
 my $id_b          = 'device_b';
 my $other_data_b = 'test_b';
 my $b_recv_msg1_r = b_recv_msg1( $group, $msg1, \&decode_cbor, $ctx );
+### b_recv_other_data_a : $b_recv_msg1_r->{other_data_a}
 my $b_send_msg2_r = b_send_msg2(
   $group, $b_recv_msg1_r, $id_b, $random_range, $point_compress_t, $hash_name, $key_len, \&encode_cbor,
   $mac_func,
@@ -151,6 +152,8 @@ my $a_recv_msg2_r = a_recv_msg2(
   $dec_func,
   $ctx,
 );
+
+### a_recv_other_data_b : $a_recv_msg2_r->{other_data_b}
 
 my $a_verify_msg2 = a_verify_msg2(
     $msg1_r, $a_recv_msg2_r, 
