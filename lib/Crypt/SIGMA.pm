@@ -22,6 +22,8 @@ our @ISA    = qw(Exporter);
 our @EXPORT = qw/
   derive_z_ke_km
   derive_ks
+  verify_msg_mac_sig
+  gen_msg_mac_sig_enc
 
   a_send_msg1
   b_recv_msg1
@@ -62,7 +64,7 @@ sub derive_ks {
 
 sub a_send_msg1 {
 
-  # msg1: g^x, na
+  # msg1: g^x, na, other_data_a
   my ( $group, $random_range, $point_compress_t, $pack_msg_func, $ctx, $other_data_a ) = @_;
 
   my $na = Crypt::OpenSSL::Bignum->rand_range( $random_range );
@@ -76,7 +78,7 @@ sub a_send_msg1 {
 
 sub b_recv_msg1 {
 
-  # msg1: g^x, na
+  # msg1: g^x, na, other_data_a
   my ( $group, $msg1, $unpack_msg_func, $ctx ) = @_;
 
   my $msg1_r = $unpack_msg_func->( $msg1 );
@@ -92,10 +94,12 @@ sub b_recv_msg1 {
 
 sub b_send_msg2 {
 
-  # msg2: g^y, nb, ENC{ B, SigB(MAC(1, na, B, g^y)) }
+  # msg2: g^y, nb, ENC{ B, other_data_b, SigB(MAC(1, na, B, g^y, other_data_a, other_data_b)) }
   my (
-    $group,    $b_recv_msg1_r, $id_b, $random_range, $point_compress_t, $hash_name, $key_len, $pack_msg_func, $mac_func, $sign_func,
-    $enc_func, $ctx,           $other_data_b
+    $group, $b_recv_msg1_r, $id_b, $s_priv_b, $random_range, $point_compress_t, $hash_name, $key_len, 
+    $pack_msg_func, $mac_func, $sign_func, $enc_func, 
+    $ctx,
+    $other_data_b, 
   ) = @_;
 
   #parse recv msg1
@@ -110,31 +114,22 @@ sub b_send_msg2 {
   my $nb         = Crypt::OpenSSL::Bignum->rand_range( $random_range );
   my $ek_key_b_r = generate_ec_key( $group, undef, $point_compress_t, $ctx );
 
+  my $kr = derive_z_ke_km( $ek_key_b_r->{priv_pkey}, $b_recv_ek_a_pub_pkey, $hash_name, $key_len );
+
   # $b_tbm = [1, na, B, g^y]
-  my $b_tbm = $pack_msg_func->( [ 1, $b_recv_na, $id_b, $ek_key_b_r->{pub_bin}, $b_recv_other_data_a, $other_data_b ] );
-
-  my $key_r = derive_z_ke_km( $ek_key_b_r->{priv_pkey}, $b_recv_ek_a_pub_pkey, $hash_name, $key_len );
-
-  # $b_tbs = MAC($b_tbm)
-  my $b_tbs = $mac_func->( $b_tbm, $key_r->{km}, );
-
-  # @b_sig = sigB($b_tbs)
-  my @b_sig = $sign_func->( $b_tbs );
-
-  # $b_tbe = { B, SigB(MAC(1, na, B, g^y)) }
-  my $b_tbe = $pack_msg_func->( [ $id_b, $other_data_b, @b_sig ] );
-
-  my $b_cipher_info = $enc_func->( $key_r->{ke}, $b_tbe, $pack_msg_func );
+  my $data_to_enc_r = [ $id_b, $other_data_b ];
+  my $data_to_mac_r = [ 1, $b_recv_na, $id_b, $ek_key_b_r->{pub_bin}, $b_recv_other_data_a, $other_data_b ];
+  my $b_cipher_info = gen_msg_mac_sig_enc($data_to_enc_r, $data_to_mac_r, $kr->{km}, $s_priv_b, $kr->{ke}, $pack_msg_func, $mac_func, $sign_func, $enc_func);
   ### b_cipher_info: unpack("H*", $b_cipher_info)
 
   my $msg2 = $pack_msg_func->( [ $ek_key_b_r->{pub_bin}, $nb->to_bin, $b_cipher_info ] );
 
-  return { nb => $nb, y_r => $ek_key_b_r, other_data_b => $other_data_b, derive_key => $key_r, msg2 => $msg2 };
+  return { nb => $nb, y_r => $ek_key_b_r, other_data_b => $other_data_b, derive_key => $kr, msg2 => $msg2 };
 } ## end sub b_send_msg2
 
 sub a_recv_msg2 {
 
-  # msg2: g^y, nb, ENC{ B, SigB(MAC(1, na, B, g^y)) }
+  # msg2: g^y, nb, ENC{ B, other_data_b, SigB(MAC(1, na, B, g^y, other_data_a, other_data_b)) }
   my ( $group, $msg1_r, $msg2, $hash_name, $key_len, $unpack_msg_func, $dec_func, $ctx ) = @_;
 
   my $ek_key_a_r = $msg1_r->{x_r};
@@ -170,20 +165,15 @@ sub a_recv_msg2 {
   };
 } ## end sub a_recv_msg2
 
+
 sub a_verify_msg2 {
-  my ( $msg1_r, $a_recv_msg2_r, $pack_msg_func, $mac_func, $sig_verify_func ) = @_;
+  my ( $msg1_r, $a_recv_msg2_r, $sig_pub, $pack_msg_func, $mac_func, $verify_func ) = @_;
 
-  my $key_r = $a_recv_msg2_r->{derive_key};
+  my $kr = $a_recv_msg2_r->{derive_key};
 
-  my $a_rebuild_tbm = $pack_msg_func->(
-    [ 1, $msg1_r->{na}->to_bin, $a_recv_msg2_r->{id_b}, $a_recv_msg2_r->{gy}, $msg1_r->{other_data_a}, $a_recv_msg2_r->{other_data_b} ]
-  );
-  my $a_rebuild_tbs = $mac_func->( $a_rebuild_tbm, $key_r->{km}, );
-  ### a_rebuild_tbm: unpack("H*", $a_rebuild_tbm)
-  ### a_rebuild_tbs: unpack("H*", $a_rebuild_tbs)
+  my $data_to_mac_r = [ 1, $msg1_r->{na}->to_bin, $a_recv_msg2_r->{id_b}, $a_recv_msg2_r->{gy}, $msg1_r->{other_data_a}, $a_recv_msg2_r->{other_data_b} ] ;
 
-  my @a_recv_sig_b = @{ $a_recv_msg2_r->{sig} };
-  my $verify_res   = $sig_verify_func->( $a_rebuild_tbs, @a_recv_sig_b );
+  my $verify_res = verify_msg_mac_sig($data_to_mac_r, $a_recv_msg2_r->{sig}, $kr->{km}, $sig_pub, $pack_msg_func, $mac_func, $verify_func);
   ### $verify_res
 
   croak "a verify msg2 fail" unless ( $verify_res );
@@ -191,42 +181,73 @@ sub a_verify_msg2 {
   return $a_recv_msg2_r;
 } ## end sub a_verify_msg2
 
+sub verify_msg_mac_sig {
+
+    my ($data_to_mac_r, $sig_r, $km, $sig_pub, $pack_msg_func, $mac_func, $verify_func) = @_;
+
+    my $rebuild_tbm = $pack_msg_func->( $data_to_mac_r );
+    ### rebuild_tbm: unpack("H*", $rebuild_tbm)
+
+    my $rebuild_tbs = $mac_func->( $rebuild_tbm, $km );
+    ### rebuild_tbs: unpack("H*", $rebuild_tbs)
+
+    my $verify_res = $verify_func->( $rebuild_tbs, $sig_r, $sig_pub  );
+    ### $verify_res
+
+    return $verify_res;
+}
+
+sub gen_msg_mac_sig_enc {
+    my ($data_to_enc_r, $data_to_mac_r, $km, $sign_priv, $ke, $pack_msg_func, $mac_func, $sign_func, $enc_func) = @_;
+
+    my $tbm = $pack_msg_func->( $data_to_mac_r );
+    ### tbm: unpack("H*", $tbm)
+
+    my $tbs = $mac_func->( $tbm, $km );
+    ### tbs: unpack("H*", $tbs)
+
+    my @sig = $sign_func->( $sign_priv, $tbs );
+    ### sig.r: unpack("H*", $sig[0])
+    ### sig.s: unpack("H*", $sig[1])
+
+    my $tbe = $pack_msg_func->( [ @$data_to_enc_r, @sig ] );
+    ### tbe: unpack("H*", $tbe)
+
+    my $cipher_info_r = $enc_func->( $ke, $tbe );
+    my $cipher_info = $pack_msg_func->($cipher_info_r);
+    ### cipher_info: unpack("H*", $cipher_info)
+}
+
 sub a_send_msg3 {
+    # ENC{ A, SigA(MAC(0, nb, A, g^x, other_data_b, other_data_a))
+    my ( $id_a, $s_priv_a, $msg1_r, $a_recv_msg2_r, $pack_msg_func, $mac_func, $sign_func, $enc_func ) = @_;
 
-  # ENC{ A, SigA(MAC(0, nb, A, g^x))
-  my ( $id_a, $msg1_r, $a_recv_msg2_r, $pack_msg_func, $mac_func, $sign_func, $enc_func ) = @_;
 
-  my $derive_key = $a_recv_msg2_r->{derive_key};
+    my $data_to_enc_r = [ $id_a ];
 
-  my $a_tbm = $pack_msg_func->( [ 0, $a_recv_msg2_r->{nb}, $id_a, $msg1_r->{x_r}{pub_bin}, $a_recv_msg2_r->{other_data_b}, $msg1_r->{other_data_a} ] );
-  ### a recv nb: unpack("H*", $a_recv_msg2_r->{nb})
-  ### $id_a
-  ### gx: unpack("H*", $msg1_r->{x_r}{pub_bin})
-  ### a_tbm: unpack("H*", $a_tbm)
+    my $data_to_mac_r = [ 0, $a_recv_msg2_r->{nb}, $id_a, $msg1_r->{x_r}{pub_bin}, $a_recv_msg2_r->{other_data_b}, $msg1_r->{other_data_a} ];
+    ### a recv nb: unpack("H*", $a_recv_msg2_r->{nb})
+    ### $id_a
+    ### gx: unpack("H*", $msg1_r->{x_r}{pub_bin})
 
-  my $a_tbs = $mac_func->( $a_tbm, $derive_key->{km}, );
-  ### a_tbs: unpack("H*", $a_tbs)
+    my $kr = $a_recv_msg2_r->{derive_key};
 
-  my @a_sig = $sign_func->( $a_tbs );
+    my $a_cipher_info = gen_msg_mac_sig_enc($data_to_enc_r, $data_to_mac_r, $kr->{km}, $s_priv_a, $kr->{ke}, $pack_msg_func, $mac_func, $sign_func, $enc_func);
+    ### a_cipher_info: unpack("H*", $a_cipher_info)
 
-  my $a_tbe = $pack_msg_func->( [ $id_a, @a_sig ] );
-
-  my $a_cipher_info = $enc_func->( $derive_key->{ke}, $a_tbe, $pack_msg_func );
-  ### a_cipher_info: unpack("H*", $a_cipher_info)
-
-  return $a_cipher_info;
+    return $a_cipher_info;
 } ## end sub a_send_msg3
 
 sub b_recv_msg3 {
 
-  # msg3 a -> b: ENC{ A, SigA(MAC(0, nb, A, g^x))
+  # msg3 a -> b: ENC{ A, SigA(MAC(0, nb, A, g^x, other_data_b, other_data_a))
   # msg4 b -> a: MAC(2, na, "ack")
-  my ( $b_recv_msg1_r, $b_send_msg2_r, $msg3, $pack_msg_func, $unpack_msg_func, $mac_func, $sig_verify_func, $dec_func ) = @_;
+  my ( $b_recv_msg1_r, $b_send_msg2_r, $msg3, $s_pub_a, $pack_msg_func, $unpack_msg_func, $mac_func, $verify_func, $dec_func ) = @_;
 
   my $cipher_info = $unpack_msg_func->( $msg3 );
 
-  my $key_r     = $b_send_msg2_r->{derive_key};
-  my $plaintext = $dec_func->( $key_r->{ke}, @$cipher_info );
+  my $kr     = $b_send_msg2_r->{derive_key};
+  my $plaintext = $dec_func->( $kr->{ke}, @$cipher_info );
 
   my $plaintext_r = $unpack_msg_func->( $plaintext );
   my ( $b_recv_id_a, @b_recv_sig_a ) = @$plaintext_r;
@@ -235,15 +256,12 @@ sub b_recv_msg3 {
   ### s : unpack("H*", $b_recv_sig_a[1])
 
   my $nb            = $b_send_msg2_r->{nb};
-  my $b_rebuild_tbm = $pack_msg_func->( [ 0, $nb->to_bin, $b_recv_id_a, $b_recv_msg1_r->{gx}, $b_send_msg2_r->{other_data_b}, $b_recv_msg1_r->{other_data_a} ] );
-  my $b_rebuild_tbs = $mac_func->( $b_rebuild_tbm, $key_r->{km}, );
+  my $data_to_mac_r = [ 0, $nb->to_bin, $b_recv_id_a, $b_recv_msg1_r->{gx}, $b_send_msg2_r->{other_data_b}, $b_recv_msg1_r->{other_data_a} ];
   ### nb: $nb->to_hex
   ### $b_recv_id_a
   ### b recv gx: unpack("H*", $b_recv_msg1_r->{gx})
-  ### b_rebuild_tbm: unpack("H*", $b_rebuild_tbm)
-  ### b_rebuild_tbs: unpack("H*", $b_rebuild_tbs)
 
-  my $verify_res = $sig_verify_func->( $b_rebuild_tbs, @b_recv_sig_a );
+  my $verify_res = verify_msg_mac_sig($data_to_mac_r, \@b_recv_sig_a, $kr->{km}, $s_pub_a, $pack_msg_func, $mac_func, $verify_func);
   ### $verify_res
 
   croak "b verify msg3 fail" unless ( $verify_res );
