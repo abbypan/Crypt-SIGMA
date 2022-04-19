@@ -198,7 +198,7 @@ sub a_send_msg3 {
 
   my $derive_key = $a_recv_msg2_r->{derive_key};
 
-  my $a_tbm = $pack_msg_func->( [ 0, $a_recv_msg2_r->{nb}, $id_a, $msg1_r->{x_r}{pub_bin} ] );
+  my $a_tbm = $pack_msg_func->( [ 0, $a_recv_msg2_r->{nb}, $id_a, $msg1_r->{x_r}{pub_bin}, $a_recv_msg2_r->{other_data_b}, $msg1_r->{other_data_a} ] );
   ### a recv nb: unpack("H*", $a_recv_msg2_r->{nb})
   ### $id_a
   ### gx: unpack("H*", $msg1_r->{x_r}{pub_bin})
@@ -235,7 +235,7 @@ sub b_recv_msg3 {
   ### s : unpack("H*", $b_recv_sig_a[1])
 
   my $nb            = $b_send_msg2_r->{nb};
-  my $b_rebuild_tbm = $pack_msg_func->( [ 0, $nb->to_bin, $b_recv_id_a, $b_recv_msg1_r->{gx} ] );
+  my $b_rebuild_tbm = $pack_msg_func->( [ 0, $nb->to_bin, $b_recv_id_a, $b_recv_msg1_r->{gx}, $b_send_msg2_r->{other_data_b}, $b_recv_msg1_r->{other_data_a} ] );
   my $b_rebuild_tbs = $mac_func->( $b_rebuild_tbm, $key_r->{km}, );
   ### nb: $nb->to_hex
   ### $b_recv_id_a
