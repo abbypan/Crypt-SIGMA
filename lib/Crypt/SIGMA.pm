@@ -43,7 +43,8 @@ our @EXPORT_OK = @EXPORT;
 sub derive_z_ke_km {
   my ( $self_priv, $peer_pub, $hash_name, $key_len ) = @_;
 
-  my $z = ecdh_pkey( $self_priv, $peer_pub );
+  my $z_hex = ecdh( $self_priv, $peer_pub );
+  my $z = pack("H*", $z_hex);
   ### z: unpack("H*", $z)
 
   my $zero_salt = pack( "H64", '0' );
@@ -71,7 +72,7 @@ sub a_send_msg1 {
 
   my $na = Crypt::OpenSSL::Bignum->rand_range( $random_range );
 
-  my $ek_key_a_r = generate_ec_key( $group, undef, $point_compress_t, $ctx );
+  my $ek_key_a_r = generate_ec_key( $group, undef );
 
   my $msg1 = $pack_msg_func->( [ $ek_key_a_r->{pub_bin}, $na->to_bin, $other_data_a ] );
 
@@ -114,7 +115,7 @@ sub b_send_msg2 {
 
   #nb, ek
   my $nb         = Crypt::OpenSSL::Bignum->rand_range( $random_range );
-  my $ek_key_b_r = generate_ec_key( $group, undef, $point_compress_t, $ctx );
+  my $ek_key_b_r = generate_ec_key( $group, undef );
 
   my $kr = derive_z_ke_km( $ek_key_b_r->{priv_pkey}, $b_recv_ek_a_pub_pkey, $hash_name, $key_len );
 
